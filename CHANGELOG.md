@@ -4,7 +4,7 @@ CHANGELOG
 v0.1.0
 ------
 
-2022-11-??
+2023-01-??
 
 * Initial release
 

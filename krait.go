@@ -8,9 +8,10 @@
 package krait
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
+	// "log"
 	"os"
 	"sort"
 	"strconv"
@@ -28,13 +29,12 @@ const (
 	PanicOnError        flag.ErrorHandling = flag.PanicOnError
 	ErrorInvalidCommand                    = "invalid command"
 	ErrorNoArguments                       = "no command line arguments"
-	ErrorNotParsed                         = "command line has not been parsed"
 	OptionBool                             = "bool"
 	OptionInt                              = "int"
 	OptionString                           = "string"
 	OptionUint                             = "uint"
-	summeryTitle                           = "COMMAND SUMMERY\n---------------"
-	optionTitle                            = "\n\nOPTIONS\n-------"
+	summeryTitle                           = "COMMAND SUMMERY\n---------------" // May become editable in future versions
+	optionTitle                            = "\n\nOPTIONS\n-------"             // May become editable in future versions
 	// ErrorInvalidSubCommand                    = "invalid subcommand"
 
 // 	appUsage = `
@@ -74,60 +74,95 @@ type Argument struct {
 
 // FlagSet is the Krait expansion of flag.FlagSet
 type FlagSet struct {
-	AppLabel      string
-	NArgs         int                                  // The number of arguments expected for this subcommand. 0 = none, 1+ = the exact number of expected arguments, -1 = any number of arguments
-	args          []string                             // bare arguments
-	cmd           string                               // Command name
-	CmdFunc       func(fs *FlagSet, args ...string)    // Function to call when the command is active
-	Epilogue      string                               // Help epilogue
-	flagSet       *flag.FlagSet                        // flag.FlagSet for the krait.FlagSet
-	HelpOutput    func(fs *FlagSet, cmdName ...string) // The default help output method
-	isParsed      bool                                 // If a command line was parsed yet
-	optionAliases map[string]string                    // POSIX or GNU aliases for an option
-	Options       map[string]Option                    // Map of options to track
-	parent        *FlagSet                             // Parent krait.FlagSet of this krait.FlagSet
-	subcmd        string                               // Active sub-command
-	subcmdAliases map[string]string                    // Map of valid sub-command aliases
-	subcommands   map[string]*FlagSet                  // Map of krait.FlagSet sub-commands
-	Summery       string                               // krait.FlagSet sub-command usage summery
+	AppLabel          string                               // Application name and version number
+	args              []string                             // bare arguments
+	NArgs             int                                  // The number of arguments expected for this subcommand. 0 = none, 1+ = the exact number of expected arguments, -1 = any number of arguments
+	cmd               string                               // Command name
+	CmdFunc           func(fs *FlagSet, args ...string)    // Function to call when the command is active
+	DefaultSubCommand string                               // The subcommand to use when none is specified
+	Epilogue          string                               // Help epilogue
+	flagSet           *flag.FlagSet                        // flag.FlagSet for the krait.FlagSet
+	HelpOutput        func(fs *FlagSet, cmdName ...string) // The default help output method
+	isParsed          bool                                 // If a command line was parsed yet
+	level             int                                  // Sub command level
+	optionAliases     map[string]string                    // POSIX or GNU aliases for an option
+	Options           map[string]Option                    // Map of options to track
+	parent            *FlagSet                             // Parent krait.FlagSet of this krait.FlagSet
+	subcmd            string                               // Active sub-command
+	subcmdAliases     []map[string]string                  // Slice of Map string of valid sub-command aliases
+	subcommands       []map[string]*FlagSet                // Slice of Map of krait.FlagSet sub-commands. The slice represents the subcommand levels
+	Summery           string                               // krait.FlagSet sub-command usage summery
 	// Root          bool
 	// Usage         func()
 	// usageTemplate string
 }
 
-func (fs *FlagSet) argIsSubcommand(arg string) (result bool) {
-	arg = strings.ToLower(arg) // Lowercase because subcommand case shouldn't matter
+func (fs *FlagSet) String() string {
+	dict := make(map[string]string)
+	dict["AppLabel"] = fs.AppLabel
+	dict["NArgs"] = strconv.Itoa(fs.NArgs)
+	dict["args"] = strings.Join(fs.args, ", ")
+	dict["cmd"] = fs.cmd
+	dict["isParsed"] = fmt.Sprintf("%t", fs.isParsed)
+	dict["level"] = strconv.Itoa(fs.level)
+	dict["subcmd"] = fs.subcmd
+	dict["Summery"] = fs.Summery
+	// dict["AppLabel"] = fs.AppLabel
+	// dict["AppLabel"] = fs.AppLabel
+	// dict["AppLabel"] = fs.AppLabel
+	// dict["AppLabel"] = fs.AppLabel
+	// dict["AppLabel"] = fs.AppLabel
 
-	// Check subcommands for a match
-	for k := range fs.subcommands {
-		if arg == k {
-			result = true
-			break
-		}
+	jsonBytes, err := json.MarshalIndent(dict, "", "	")
+
+	result := ""
+	if err != nil {
+		result = err.Error()
+	} else {
+		result = string(jsonBytes)
 	}
 
-	if result == false {
-		// Check subcommand aliases for a match
-		for k := range fs.subcmdAliases {
+	return result
+}
+
+func (fs *FlagSet) argIsSubcommand(arg string, level int) (subcmd string, result bool) {
+	arg = strings.ToLower(arg) // Lowercase because subcommand case shouldn't matter
+	// log.Printf("krait.FlagSet.argIsSubcommand() | %q | level: %d | arg: %q\n", fs.cmd, level, arg)
+
+	rfs := fs.getRoot()
+
+	// log.Printf("krait.FlagSet.argIsSubcommand() | %q | level: %d | len(rfs.subcommands): %d\n", fs.cmd, level, len(rfs.subcommands))
+	// Check subcommands for a match
+	if level < len(rfs.subcommands) {
+		for k := range rfs.subcommands[level] {
 			if arg == k {
+				subcmd = arg
 				result = true
 				break
 			}
 		}
 	}
 
-	// log.Printf("krait.FlagSet.argIsSubcommand() | %q | arg: %q | result: %t\n", fs.cmd, arg, result)
+	// log.Printf("krait.FlagSet.argIsSubcommand() | %q | level: %d | len(rfs.subcmdAliases): %d | result: %t\n", fs.cmd, level, len(rfs.subcmdAliases), result)
+	if result == false && level < len(rfs.subcmdAliases) {
+		// Check subcommand aliases for a match
+		for alias, sub := range rfs.subcmdAliases[level] {
+			// log.Printf("krait.FlagSet.argIsSubcommand() | %q | level: %d | arg: %q | alias: %q | sub: %q\n", fs.cmd, level, arg, alias, sub)
+			if arg == alias {
+				subcmd = sub
+				result = true
+				break
+			}
+		}
+	}
 
-	return result
+	// log.Printf("krait.FlagSet.argIsSubcommand() | %q | level: %d | arg: %q | subcmd: %q | result: %t\n", fs.cmd, level, arg, subcmd, result)
+
+	return subcmd, result
 }
 
-func (fs *FlagSet) Args() (args []string, err error) {
-	if fs.isParsed {
-		args = fs.args
-	} else {
-		err = fmt.Errorf(ErrorNotParsed)
-	}
-	return args, err
+func (fs *FlagSet) Args() []string {
+	return fs.args
 }
 
 func (fs *FlagSet) getCommandList() (list []string) {
@@ -144,19 +179,31 @@ func (fs *FlagSet) getCommandList() (list []string) {
 	return list
 }
 
-// getRoot may not be necessary
+func (fs *FlagSet) getDefaultSubCommand(level int, subcmd string) (result string) {
+	rfs := fs.getRoot()
+	if level < len(rfs.subcommands) {
+		if _, ok := rfs.subcommands[level][subcmd]; ok {
+			result = rfs.subcommands[level][subcmd].DefaultSubCommand
+		}
+	}
+	return result
+}
+
+// getRoot returns the root *FlagSet
 func (fs *FlagSet) getRoot() (p *FlagSet) {
-	// p = fs.parent
-	if p.ParentName() != "nil" {
+	p = fs
+	// log.Printf("krait.FlagSet.getRoot() | %q | p: %v\n", fs.cmd, p)
+
+	for p.parent != nil {
+		// log.Printf("krait.FlagSet.getRoot() | %q | p: %v\n", fs.cmd, p)
 		p = p.parent
 	}
 
 	return p
 }
 
-// func (fs *FlagSet) NewFlagSet(subcommand string, cmdFunc func(fs *FlagSet, args ...string), errHandler ...flag.ErrorHandling) *FlagSet {
 func (fs *FlagSet) NewFlagSet(subcommand string, errHandler ...flag.ErrorHandling) *FlagSet {
-	// log.Printf("krait.FlagSet.HelpOutput() | %q | subcommand: %q\n", fs.cmd, subcommand)
+	// log.Printf("krait.FlagSet.NewFlagSet() | %q | subcommand: %q\n", fs.cmd, subcommand)
 	errorHandler := flag.ExitOnError
 	if len(errHandler) > 0 {
 		errorHandler = errHandler[0]
@@ -164,34 +211,37 @@ func (fs *FlagSet) NewFlagSet(subcommand string, errHandler ...flag.ErrorHandlin
 
 	subcommand = strings.ToLower(subcommand) // Lowercase because case shouldn't matter
 
-	ksc := &FlagSet{
+	nfs := &FlagSet{
 		cmd:           subcommand,
 		flagSet:       flag.NewFlagSet(subcommand, errorHandler),
+		level:         fs.level + 1,
 		parent:        fs,
 		Options:       make(map[string]Option),
 		optionAliases: make(map[string]string),
-		subcmdAliases: make(map[string]string),
-		subcommands:   make(map[string]*FlagSet),
+		subcmdAliases: make([]map[string]string, 2),
+		subcommands:   make([]map[string]*FlagSet, 2),
 	}
-	// ksc.flagSet.Usage = func() {
-	// 	fmt.Fprintf(flag.CommandLine.Output(), "\nUSAGE: %s %s\n\n", ksc.flagSet.Name(), ksc.Summery)
+	// nfs.flagSet.Usage = func() {
+	// 	fmt.Fprintf(flag.CommandLine.Output(), "\nUSAGE: %s %s\n\n", nfs.flagSet.Name(), nfs.Summery)
 	// }
-	ksc.flagSet.Usage = func() {
+	nfs.flagSet.Usage = func() {
 		optionCount := 0
 		usage := usageNoOptions
 
-		ksc.flagSet.VisitAll(func(f *flag.Flag) { optionCount++ })
+		nfs.flagSet.VisitAll(func(f *flag.Flag) { optionCount++ })
 
 		if optionCount > 0 {
 			usage = usageWithOptions
 		}
 
-		cmdChain := strings.Join(ksc.getCommandList(), " ")
+		cmdChain := strings.Join(nfs.getCommandList(), " ")
 
-		// fmt.Fprintf(flag.CommandLine.Output(), usage, ksc.parent.cmd, ksc.cmd)
+		fmt.Fprintln(flag.CommandLine.Output(), fs.AppLabel)
+		fmt.Fprintln(flag.CommandLine.Output())
+		// fmt.Fprintf(flag.CommandLine.Output(), usage, nfs.parent.cmd, nfs.cmd)
 		fmt.Fprintf(flag.CommandLine.Output(), usage, cmdChain)
 
-		ksc.flagSet.VisitAll(func(f *flag.Flag) {
+		nfs.flagSet.VisitAll(func(f *flag.Flag) {
 			optionName := fmt.Sprintf("-%s", f.Name)
 			if f.DefValue == "" {
 				fmt.Fprintf(flag.CommandLine.Output(), "  %-13s  %s (no default)\n", optionName, f.Usage)
@@ -202,9 +252,12 @@ func (fs *FlagSet) NewFlagSet(subcommand string, errHandler ...flag.ErrorHandlin
 		fmt.Println()
 	}
 
-	fs.subcommands[subcommand] = ksc
+	if fs.subcommands[nfs.level] == nil {
+		fs.subcommands[nfs.level] = make(map[string]*FlagSet)
+	}
+	fs.subcommands[nfs.level][subcommand] = nfs
 
-	return ksc
+	return nfs
 }
 
 func (fs *FlagSet) OptionBool(aliases []string, defaultValue bool, description string) *bool {
@@ -274,11 +327,11 @@ func (fs *FlagSet) optionAliasSetup(aliasList []string) (alias string, aliases [
 func (fs *FlagSet) OptionInt(aliases []string, dataDefault int, description string) (o *int) {
 	var alias string
 
-	log.Printf("krait.FlagSet.OptionInt() | %q | aliases: %q\n", fs.cmd, aliases)
+	// log.Printf("krait.FlagSet.OptionInt() | %q | aliases: %q\n", fs.cmd, aliases)
 	alias, aliases = fs.optionAliasSetup(aliases)
-	log.Printf("krait.FlagSet.OptionInt() | %q | alias: %q\n", fs.cmd, alias)
-	log.Printf("krait.FlagSet.OptionInt() | %q | aliases: %q\n", fs.cmd, aliases)
-	log.Printf("krait.FlagSet.OptionInt() | %q | dataDefault: %d | description: %q\n", fs.cmd, dataDefault, description)
+	// log.Printf("krait.FlagSet.OptionInt() | %q | alias: %q\n", fs.cmd, alias)
+	// log.Printf("krait.FlagSet.OptionInt() | %q | aliases: %q\n", fs.cmd, aliases)
+	// log.Printf("krait.FlagSet.OptionInt() | %q | dataDefault: %d | description: %q\n", fs.cmd, dataDefault, description)
 	o = fs.flagSet.Int(alias, dataDefault, description)
 	fs.Options[alias] = Option{Type: OptionInt, value: o}
 	// log.Printf("krait.FlagSet.OptionInt() | %q | fs.Options[%q]: %v\n", fs.cmd, alias, fs.Options[alias])
@@ -292,111 +345,142 @@ func (fs *FlagSet) ParentName() string {
 	return fs.parent.cmd
 }
 
-func (fs *FlagSet) parse(subFS *FlagSet, args []string, pass int) (subcmd string, err error) {
-	// log.Printf("krait.FlagSet.parse() | %q | pass: %d | args: %q\n", fs.cmd, pass, args)
+func (fs *FlagSet) parseSubCMD(args []string, level int, subcommand string) (subcmd string, lvl int, err error) {
+	// log.Printf("krait.FlagSet.parseSubCMD() | %q | levels: %d:%d | subcommand: %q | args: %q (start)\n", fs.cmd, fs.level, level, subcommand, args)
 
-	if pass == 1 {
-		if fs.cmd != subcmd {
+	if level == 0 {
+		if fs.cmd != args[0] {
 			/*
-				The expected command line name is different.
-				For now we don't care but could be useful in a later version. ~RuneImp
+				The expected command line name is different than expected.
+				For now we don't care but would likely be useful feature in a later version. ~RuneImp
 			*/
 		}
-		args = args[1:]
-		subcmd, err = fs.parse(subFS, args, 2)
+		subcmd, lvl, err = fs.parseSubCMD(args[1:], 1, args[0]) // NOTE: should probably use fs.cmd instead of args[0] but seems less flexible
 	} else {
-		if len(args) == 0 {
-			// No possibility of a subcommand
-			// log.Printf("krait.FlagSet.parse() | %q | pass: %d | subcmd: %q | No Arguments\n", fs.cmd, pass, subcmd)
-		} else {
-			arg := args[0]
+		arg := subcommand
+		argCmd, isSubCMD := fs.argIsSubcommand(arg, level)
+		// log.Printf("krait.FlagSet.parseSubCMD() | %q | levels: %d:%d | arg: %q | argCmd: %q | isSubCMD: %t\n", fs.cmd, fs.level, level, arg, argCmd, isSubCMD)
 
-			if fs.argIsSubcommand(arg) {
-				// The 1st argument was a subcommand so keep drilling down
+		// NOTE: this logic probably needs lots more work within this method ~RuneImp
+		// if isSubCMD == false {
+		// 	log.Printf("krait.FlagSet.parseSubCMD() | %q | fs.level: %d | level: %d | fs.DefaultSubCommand: %q\n", fs.cmd, fs.level, level, fs.DefaultSubCommand)
+		// 	if fs.getDefaultSubCommand(level) != "" {
+		// 		tmp := []string{fs.DefaultSubCommand}
+		// 		args = append(tmp, args...)
+		// 		argCmd = fs.getDefaultSubCommand(level) // Needs to check the prior subcommand for this level of default subcommand
+		// 		// isSubCMD = true
+		// 	}
+		// }
 
-				subcmd = strings.ToLower(arg) // Lowercase because subcommand case shouldn't matter
-				subFS = fs.subcommands[arg]
+		if isSubCMD {
+			// The 1st argument was a subcommand so keep drilling down
 
-				arg, err = fs.parse(subFS, args[1:], pass+1)
-				if arg != "" {
-					subcmd = arg
+			subcmd = argCmd
+			lvl = level
+			// log.Printf("krait.FlagSet.parseSubCMD() | %q | levels: %d:%d | args: %q | subcmd: %q | len(args): %d\n", fs.cmd, fs.level, level, args, subcmd, len(args))
+
+			if len(args) > 0 {
+				// Recursive check for more subcommands if there are enough arguments to allow for more subcommands
+				var (
+					argTmp string
+					errTmp error
+					lvlTmp int
+				)
+				argTmp, lvlTmp, errTmp = fs.parseSubCMD(args[1:], level+1, args[0])
+				// log.Printf("krait.FlagSet.parseSubCMD() | %q | levels: %d:%d | args: %q | argTmp: %q | lvlTmp: %d | errTmp: %v\n", fs.cmd, fs.level, level, args, argTmp, lvlTmp, errTmp)
+
+				if argTmp != "" {
+					subcmd = argTmp
+					lvl = lvlTmp
 				}
-			} else {
-				// The 1st argument wasn't a subcommand so parse arguments with the flag library
-				args = args[1:]
-				// log.Printf("krait.FlagSet.parse() | %q | pass: %d | subcmd: %q | Parsing args: %q\n", fs.cmd, pass, subcmd, args)
-				err = subFS.flagSet.Parse(args)
+				if errTmp != nil {
+					err = errTmp
+				}
 			}
 		}
 	}
 
-	// log.Printf("krait.FlagSet.parse() | %q | pass: %d | subcmd: %q | err: %v\n", fs.cmd, pass, subcmd, err)
-	return subcmd, err
+	// log.Printf("krait.FlagSet.parseSubCMD() | %q | levels: %d:%d | subcmd: %q | err: %v (end)\n", fs.cmd, fs.level, level, subcmd, err)
+	return subcmd, lvl, err
 }
 
 func (fs *FlagSet) Parse(args []string) (subcmd string, err error) {
-	log.Printf("krait.FlagSet.Parse() | %q | args: %q\n", fs.cmd, args)
+	// log.Printf("krait.FlagSet.Parse() | %q | args: %q\n", fs.cmd, args)
 	// log.Printf("krait.FlagSet.Parse() | %q | fs.flagSet.Name(): %q\n", fs.cmd, fs.flagSet.Name())
 	// log.Printf("krait.FlagSet.Parse() | %q | fs.ParentName(): %s\n", fs.cmd, quoteNotNil(fs.ParentName()))
 
 	/*
-		## Basic Truth
+		## Basic Truths
 
-		* The Parse method just walks the command tree
-		* If the 1st argument isn't a subcommand hand off to flag.FlatSet.Parse()
+		* The Parse method should only be called from the root FlagSet
+		* The Parse method just starts the walk down the command line and handles option parsing for the specified subcommand
+		* If there are no args at all something went horribly wrong, panic!
+		* If there are no arguments beyond the command check fs.DefaultSubCommand
+		* If the 1st argument is a subcommand call fs.parseSubCMD()
+		* Else hand off to flag.FlatSet.Parse()
 	*/
 
-	// Sanity Check: the args slice should always have the command name for the FlagSet at the very least
+	// Sanity Check: this Parse method should only be called on the root FlagSet
+	if fs.level != 0 {
+		panic("the Parse method should only be called on the root FlagSet")
+	}
+
+	// Sanity Check: the args slice should always have the command name for the base FlagSet at the very least
 	if len(args) == 0 {
 		err = fmt.Errorf(ErrorInvalidCommand)
 		return subcmd, err
 	}
 
-	// Check if the FlagSet is receiving any arguments to parse
+	// Check if there is a default subcommand to implement
 	if len(args) == 1 {
 		err = fmt.Errorf(ErrorNoArguments)
-		if fs.CmdFunc != nil {
-			fs.CmdFunc(fs)
+		if fs.DefaultSubCommand != "" {
+			args = append(args, fs.DefaultSubCommand)
 		}
-		fs.subcmd = subcmd
-		return subcmd, err
 	}
 
-	subcmd, err = fs.parse(fs, args, 1)
+	level := 0
 
-	if subFS, ok := fs.subcommands[subcmd]; ok {
-		// log.Printf("krait.FlagSet.Parse() | %q | subcmd: %q | valid: %t\n", fs.cmd, subcmd, ok)
+	subcmd, level, err = fs.parseSubCMD(args[1:], 0, args[0])
+
+	// log.Printf("krait.FlagSet.Parse() | %q | level: %d | subcmd: %q\n", fs.cmd, level, subcmd)
+
+	if subFS, ok := fs.subcommands[level][subcmd]; ok {
+		args = args[level+1:]
+		// log.Printf("krait.FlagSet.Parse() | %q | level: %d | subcmd: %q | valid: %t\n", fs.cmd, level, subcmd, ok)
 		// log.Printf("krait.FlagSet.Parse() | %q | args: %q\n", fs.cmd, args)
 
-		// Manage option aliases in args before parsing
-		for i, a := range args {
-			// log.Printf("krait.FlagSet.Parse() | %q | alias fix | a: %q | subFS.optionAliases: %q\n", subFS.cmd, a, subFS.optionAliases)
-			for k, v := range subFS.optionAliases {
-				// log.Printf("krait.FlagSet.Parse() | %q | alias fix | k: %q\n", subFS.cmd, k)
-				if a == k {
-					// log.Printf("krait.FlagSet.Parse() | %q | alias fix | v: %q\n", subFS.cmd, v)
-					args[i] = v
+		if len(args) > 0 {
+			// Manage option aliases in args before parsing
+			for i, a := range args {
+				// log.Printf("krait.FlagSet.Parse() | %q | alias fix | a: %q | subFS.optionAliases: %q\n", subFS.cmd, a, subFS.optionAliases)
+				for k, v := range subFS.optionAliases {
+					// log.Printf("krait.FlagSet.Parse() | %q | alias fix | k: %q\n", subFS.cmd, k)
+					if a == k {
+						// log.Printf("krait.FlagSet.Parse() | %q | alias fix | v: %q\n", subFS.cmd, v)
+						args[i] = v
+					}
 				}
 			}
-		}
-		// log.Printf("krait.FlagSet.Parse() | %q | args: %q\n", fs.cmd, args)
+			// log.Printf("krait.FlagSet.Parse() | %q | level: %d | subFS.flagSet.Parse(args) | args: %q\n", fs.cmd, level, args)
 
-		// subcmd, err = subFS.Parse(args)
-		_, err = subFS.Parse(args)
-		// err = subFS.flagSet.Parse(args)
+			// subcmd, err = subFS.Parse(args)
+			// _, err = subFS.Parse(args)
+			err = subFS.flagSet.Parse(args)
+			fs.getRoot().args = subFS.flagSet.Args()
+		}
+
+		if subFS.CmdFunc != nil {
+			if len(args) > 0 {
+				// log.Printf("krait.FlagSet.Parse() | %q | level: %d | subFS.CmdFunc(subFS, args...) | args: %q\n", fs.cmd, level, args)
+				subFS.CmdFunc(subFS, args...)
+			} else {
+				// log.Printf("krait.FlagSet.Parse() | %q | level: %d | subFS.CmdFunc(subFS)\n", fs.cmd, level)
+				subFS.CmdFunc(subFS)
+			}
+		}
 	} else {
 		// log.Printf("krait.FlagSet.Parse() | %q | subcmd: %q | valid: false\n", fs.cmd, subcmd)
-
-		err = fs.flagSet.Parse(args)
-		// root := fs.getRoot()
-		// root.args = append(root.args, fs.flagSet.Args()...)
-		// // for _, a := range fs.flagSet.Args() {
-		// // 	fs.args = append(fs.args, a)
-		// // }
-
-		if fs.CmdFunc != nil {
-			fs.CmdFunc(fs, args...)
-		}
 	}
 
 	// log.Printf("krait.FlagSet.Parse() | %q | subcmd: %q | err: %v\n", fs.cmd, subcmd, err)
@@ -404,7 +488,7 @@ func (fs *FlagSet) Parse(args []string) (subcmd string, err error) {
 	return subcmd, err
 }
 
-// Returns true if the FlagSet has been parsed or false otherwise
+// Parsed returns true if the FlagSet has been parsed or false otherwise
 func (fs *FlagSet) Parsed() bool {
 	return fs.isParsed
 }
@@ -418,15 +502,27 @@ func (fs *FlagSet) Parsed() bool {
 // 	fs.flagSet.StringVar(p, name, defaultValue, description)
 // }
 
+// SubCommand returns the name of the active subcommand
 func (fs *FlagSet) SubCommand() string {
 	return fs.subcmd
 }
 
+// SubcommandAlias links the supplied alias to the specified subcommand
 func (fs *FlagSet) SubcommandAlias(subcommand, alias string) {
-	// ksc := fs.subcommands[subcommand]
-	// fs.subcommands[alias] = ksc
+	// log.Printf("krait.FlagSet.SubcommandAlias() | fs.level: %d | subcommand: %q | alias: %q\n", fs.level, subcommand, alias)
 
-	fs.subcmdAliases[alias] = subcommand
+	rfs := fs.getRoot()
+
+	if rfs.subcmdAliases[fs.level] == nil {
+		rfs.subcmdAliases[fs.level] = make(map[string]string)
+	}
+	rfs.subcmdAliases[fs.level][alias] = subcommand
+
+	// for lvl := range rfs.subcmdAliases {
+	// 	for alias, subcmd := range rfs.subcmdAliases[lvl] {
+	// 		log.Printf("krait.FlagSet.SubcommandAlias() | lvl: %d | alias: %q | subcmd: %q\n", lvl, alias, subcmd)
+	// 	}
+	// }
 }
 
 func NewFlagSet(name string) (fs *FlagSet) {
@@ -434,13 +530,15 @@ func NewFlagSet(name string) (fs *FlagSet) {
 
 	// Root FlagSet
 	fs = &FlagSet{
-		cmd:           name,
-		flagSet:       flag.NewFlagSet(name, flag.ExitOnError),
-		HelpOutput:    helpOutput,
-		optionAliases: make(map[string]string),
-		Options:       make(map[string]Option),
-		subcmdAliases: make(map[string]string),
-		subcommands:   make(map[string]*FlagSet),
+		cmd:               name,
+		DefaultSubCommand: "help", // DefaultSubCommand defines a subcommand to use when non is specified on the command line which is "help" default
+		flagSet:           flag.NewFlagSet(name, flag.ExitOnError),
+		HelpOutput:        helpOutput,
+		level:             0,
+		optionAliases:     make(map[string]string),
+		Options:           make(map[string]Option),
+		subcmdAliases:     make([]map[string]string, 2),
+		subcommands:       make([]map[string]*FlagSet, 2),
 		// Epilogue:      "",
 		// Options:       make(map[string]any),
 		// Options:       make(map[string]Optional),
@@ -473,12 +571,16 @@ func NewFlagSet(name string) (fs *FlagSet) {
 		fmt.Println()
 	}
 
-	fs.SubcommandAlias("version", "ver")
-	fs.NewFlagSet("version", flag.ExitOnError)
+	verFS := fs.NewFlagSet("version", flag.ExitOnError)
+	verFS.CmdFunc = cmdVersion
+	verFS.Summery = "Displays the app name and version"
+	verFS.SubcommandAlias("version", "ver")
+
 	helpFS := fs.NewFlagSet("help", flag.ExitOnError)
 	helpFS.CmdFunc = cmdHelp
 	helpFS.HelpOutput = helpOutput
 	helpFS.Summery = "Displays this help information"
+	helpFS.SubcommandAlias("help", "hlp")
 
 	return fs
 }
@@ -542,17 +644,30 @@ func (o Option) GetString() (result string, err error) {
 }
 
 func cmdHelp(fs *FlagSet, args ...string) {
-	// log.Printf("krait.cmdHelp() | fs: %v | args: %q\n", fs, args)
+	// log.Printf("krait.cmdHelp() | args: %q | fs: %s\n", args, fs)
 	// log.Printf("krait.cmdHelp() | fs.cmd: %q | fs.HelpOutput: %v | args: %q\n", fs.cmd, fs.HelpOutput, args)
 	// log.Printf("krait.cmdHelp() | fs.cmd: %q | args: %q\n", fs.cmd, args)
+
 	if fs != nil && fs.HelpOutput != nil {
-		fs.HelpOutput(fs, args...)
+		if len(args) > 0 {
+			fs.HelpOutput(fs, args...)
+		} else {
+			fs.HelpOutput(fs)
+		}
 	}
 	os.Exit(0)
 }
 
+func cmdVersion(fs *FlagSet, args ...string) {
+	// log.Printf("krait.cmdVersion() | args: %q | fs: %s\n", args, fs)
+
+	fmt.Fprintln(flag.CommandLine.Output(), fs.getRoot().AppLabel)
+
+	os.Exit(0)
+}
+
 func helpOutput(fs *FlagSet, args ...string) {
-	// log.Printf("krait.helpOutput() | fs: %v | args: %q\n", fs, args)
+	// log.Printf("krait.helpOutput() | args: %q | fs: %s\n", args, fs)
 	// log.Printf("krait.helpOutput() | fs.cmd: %q | args: %q\n", fs.cmd, args)
 
 	cmdName := fs.cmd
@@ -572,84 +687,112 @@ func helpOutput(fs *FlagSet, args ...string) {
 
 	if cmdName == "help" {
 		rfs := fs.getRoot()
-		fmt.Fprintln(flag.CommandLine.Output(), rfs.AppLabel)
+		// log.Printf("krait.helpOutput() | rfs: %s\n", rfs)
+		fmt.Fprintln(flag.CommandLine.Output(), rfs.AppLabel) // Initial help output is the Application Name and Version AKA Label
 
 		// Output for all commands
 		widestCommand := 0
 
-		cmdList := []string{}
-		for subCmdName, subCmdFS := range fs.parent.subcommands {
-			// log.Printf("krait.FlagSet.HelpOutput() | subCmdName: %q | subCmdFS.flagSet.Name(): %q\n", subCmdName, subCmdFS.flagSet.Name())
-			if len(subCmdFS.flagSet.Name()) > widestCommand {
-				widestCommand = len(subCmdFS.flagSet.Name())
-			}
-			cmdList = append(cmdList, subCmdName)
+		cmdList := make([][]string, 1)
+		for i := range cmdList {
+			// log.Printf("krait.helpOutput() | len(cmdList): %d\n", len(cmdList))
+			cmdList[i] = make([]string, 1)
 		}
-		sort.Strings(cmdList)
+		// log.Printf("krait.helpOutput() | cmdList: %#v\n", cmdList)
+
+		for lvl := range rfs.subcommands {
+			// log.Printf("krait.helpOutput() | lvl: %d\n", lvl)
+			for subCmdName := range fs.parent.subcommands[lvl] {
+				// log.Printf("krait.helpOutput() | %d | subCmdName: %q | subCmdFS.flagSet.Name(): %q, (%d)\n", lvl, subCmdName, subCmdFS.flagSet.Name(), len(subCmdFS.flagSet.Name()))
+				// log.Printf("krait.helpOutput() | %d | subCmdName: %q, (%d)\n", lvl, subCmdName, len(subCmdName))
+				if len(subCmdName) > widestCommand {
+					widestCommand = len(subCmdName)
+				}
+				for lvl >= len(cmdList) {
+					cmdList = append(cmdList, []string{})
+				}
+				cmdList[lvl] = append(cmdList[lvl], subCmdName)
+				// log.Printf("krait.helpOutput() | lvl: %d | len(cmdList): %d\n", lvl, len(cmdList))
+			}
+			sort.Strings(cmdList[lvl])
+			// for i, subCmdName := range cmdList[lvl] {
+			// 	log.Printf("krait.helpOutput() | %d:%d | subCmdName: %q\n", lvl, i, subCmdName)
+			// }
+		}
 
 		format := fmt.Sprintf("  %%-%ds  %%s\n", widestCommand)
-		formatOptionDefault := fmt.Sprintf("  %%-%ds  %%s (default: %%v)\n", widestCommand)
-		formatOptionNodefault := fmt.Sprintf("  %%-%ds  %%s (no default)\n", widestCommand)
+		// formatOptionDefault := fmt.Sprintf("  %%-%ds  %%s (default: %%v)\n", widestCommand)
+		// formatOptionNodefault := fmt.Sprintf("  %%-%ds  %%s (no default)\n", widestCommand)
 
 		// Commands
-		// log.Printf("krait.FlagSet.HelpOutput() | format: %q\n", format)
-		// log.Printf("krait.FlagSet.HelpOutput() | cmdList: %q\n", cmdList)
+		// log.Printf("krait.helpOutput() | format: %q\n", format)
+		// log.Printf("krait.helpOutput() | cmdList: %q\n", cmdList)
 		fmt.Fprintln(flag.CommandLine.Output())
 
 		fmt.Fprintln(flag.CommandLine.Output(), summeryTitle)
-		for _, cmdName := range cmdList {
-			subCmdFS := fs.parent.subcommands[cmdName]
-			fmt.Fprintf(flag.CommandLine.Output(), format, subCmdFS.flagSet.Name(), subCmdFS.Summery)
-			// subCmdFS.flagSet.Usage()
-		}
-
-		// Options
-		optionCount := 0
-		rfs.flagSet.VisitAll(func(f *flag.Flag) { optionCount++ })
-
-		if optionCount > 0 {
-			fmt.Fprintln(flag.CommandLine.Output(), optionTitle)
-			rfs.flagSet.VisitAll(func(f *flag.Flag) {
-				optionName := fmt.Sprintf("-%s", f.Name)
-				if f.DefValue == "" {
-					fmt.Fprintf(flag.CommandLine.Output(), formatOptionNodefault, optionName, f.Usage)
-				} else {
-					fmt.Fprintf(flag.CommandLine.Output(), formatOptionDefault, optionName, f.Usage, f.DefValue)
+		for lvl := range cmdList {
+			for _, cmdName := range cmdList[lvl] {
+				if len(cmdName) > 0 {
+					// log.Printf("krait.helpOutput() | cmdName: %q\n", cmdName)
+					subCmdFS := rfs.subcommands[lvl][cmdName]
+					fmt.Fprintf(flag.CommandLine.Output(), format, subCmdFS.flagSet.Name(), subCmdFS.Summery)
+					// subCmdFS.flagSet.Usage()
 				}
-			})
-			fmt.Fprintln(flag.CommandLine.Output())
-		}
-
-		// Epilogue
-		fmt.Fprintln(flag.CommandLine.Output())
-		// log.Printf("krait.FlagSet.HelpOutput() | fs.cmd: %q | fs.AppLabel: %q | fs.Epilogue: %q\n", fs.cmd, fs.AppLabel, fs.Epilogue)
-		// log.Printf("krait.FlagSet.HelpOutput() | fs.parent.cmd: %q | fs.parent.Epilogue: %q\n", fs.parent.cmd, fs.parent.Epilogue)
-		if fs.Epilogue != "" {
-			fmt.Fprintf(flag.CommandLine.Output(), fs.Epilogue)
-			fmt.Fprintln(flag.CommandLine.Output())
-		} else {
-			parent := fs.parent
-			for parent != nil {
-				// log.Printf("krait.FlagSet.HelpOutput() | parent.cmd: %q\n", parent.cmd)
-				if parent.Epilogue != "" {
-					fmt.Fprintf(flag.CommandLine.Output(), parent.Epilogue)
-					fmt.Fprintln(flag.CommandLine.Output())
-					break
-				}
-				parent = parent.parent
 			}
 		}
-	} else {
-		for _, subcmd := range fs.parent.subcommands {
-			// log.Printf("krait.FlagSet.HelpOutput() | subcmd.flagSet.Name(): %q\n", subcmd.flagSet.Name())
-			if subcmd.flagSet.Name() == cmdName {
-				// log.Printf("krait.FlagSet.HelpOutput() | cmdName match: %q\n", cmdName)
-				subcmd.flagSet.Usage()
-				// flag.PrintDefaults()
-				// subcmd.flagSet.PrintDefaults()
 
-				// fmt.Fprintf(flag.CommandLine.Output(), subcmd.Summery)
-				break
+		/*
+
+			// Options
+			optionCount := 0
+			rfs.flagSet.VisitAll(func(f *flag.Flag) { optionCount++ })
+
+			if optionCount > 0 {
+				fmt.Fprintln(flag.CommandLine.Output(), optionTitle)
+				rfs.flagSet.VisitAll(func(f *flag.Flag) {
+					optionName := fmt.Sprintf("-%s", f.Name)
+					if f.DefValue == "" {
+						fmt.Fprintf(flag.CommandLine.Output(), formatOptionNodefault, optionName, f.Usage)
+					} else {
+						fmt.Fprintf(flag.CommandLine.Output(), formatOptionDefault, optionName, f.Usage, f.DefValue)
+					}
+				})
+				fmt.Fprintln(flag.CommandLine.Output())
+			}
+
+			// Epilogue
+			fmt.Fprintln(flag.CommandLine.Output())
+			// log.Printf("krait.helpOutput() | fs.cmd: %q | fs.AppLabel: %q | fs.Epilogue: %q\n", fs.cmd, fs.AppLabel, fs.Epilogue)
+			// log.Printf("krait.helpOutput() | fs.parent.cmd: %q | fs.parent.Epilogue: %q\n", fs.parent.cmd, fs.parent.Epilogue)
+			if fs.Epilogue != "" {
+				fmt.Fprintf(flag.CommandLine.Output(), fs.Epilogue)
+				fmt.Fprintln(flag.CommandLine.Output())
+			} else {
+				parent := fs.parent
+				for parent != nil {
+					// log.Printf("krait.helpOutput() | parent.cmd: %q\n", parent.cmd)
+					if parent.Epilogue != "" {
+						fmt.Fprintf(flag.CommandLine.Output(), parent.Epilogue)
+						fmt.Fprintln(flag.CommandLine.Output())
+						break
+					}
+					parent = parent.parent
+				}
+			}
+		*/
+	} else {
+		for i := range fs.parent.subcommands {
+			for _, subcmd := range fs.parent.subcommands[i] {
+				// log.Printf("krait.helpOutput() | subcmd.flagSet.Name(): %q\n", subcmd.flagSet.Name())
+				if subcmd.flagSet.Name() == cmdName {
+					// log.Printf("krait.helpOutput() | cmdName match: %q\n", cmdName)
+					subcmd.flagSet.Usage()
+					// flag.PrintDefaults()
+					// subcmd.flagSet.PrintDefaults()
+
+					// fmt.Fprintf(flag.CommandLine.Output(), subcmd.Summery)
+					break
+				}
 			}
 		}
 	}

@@ -57,7 +57,7 @@ func TestOptionBool(t *testing.T) {
 	// root.NewFlagSet("test", kraitTestFunction) // ExitOnError is the default
 	fs := root.NewFlagSet("test") // ExitOnError is the default
 	fs.CmdFunc = kraitTestFunction
-	confirm := root.OptionBool(optionAliases, false, "Should we confirm the processing?")
+	confirm := fs.OptionBool(optionAliases, false, "Should we confirm the processing?")
 	root.Parse(args)
 
 	got := *confirm
@@ -75,8 +75,9 @@ func TestOptionInt(t *testing.T) {
 
 	root := NewFlagSet("root")
 	// root.NewFlagSet("test", kraitTestFunction) // ExitOnError is the default
-	root.NewFlagSet("test").CmdFunc = kraitTestFunction
-	count := root.OptionInt(optionAliases, 0, "What number will invoke 'The Count'")
+	testFS := root.NewFlagSet("test")
+	testFS.CmdFunc = kraitTestFunction
+	count := testFS.OptionInt(optionAliases, 0, "What number will invoke 'The Count'")
 	root.Parse(args)
 
 	got := *count
@@ -93,9 +94,9 @@ func TestOptionAliases1(t *testing.T) {
 	optionAliases := []string{"c", "count"}
 
 	root := NewFlagSet("root")
-	fs := root.NewFlagSet("test") // ExitOnError is the default
-	fs.CmdFunc = kraitTestFunction
-	count := fs.OptionInt(optionAliases, 0, "What number will invoke 'The Count'")
+	testFS := root.NewFlagSet("test") // ExitOnError is the default
+	testFS.CmdFunc = kraitTestFunction
+	count := testFS.OptionInt(optionAliases, 0, "What number will invoke 'The Count'")
 	// count := root.OptionInt(optionAliases, 0, "What number will invoke 'The Count'")
 	root.Parse(args)
 
@@ -113,9 +114,9 @@ func TestOptionAliases2(t *testing.T) {
 	optionAliases := []string{"c", "count"}
 
 	root := NewFlagSet("root")
-	fs := root.NewFlagSet("test") // ExitOnError is the default
-	fs.CmdFunc = kraitTestFunction
-	count := fs.OptionInt(optionAliases, 0, "What number will invoke 'The Count'")
+	testFS := root.NewFlagSet("test") // ExitOnError is the default
+	testFS.CmdFunc = kraitTestFunction
+	count := testFS.OptionInt(optionAliases, 0, "What number will invoke 'The Count'")
 	// count := root.OptionInt(optionAliases, 0, "What number will invoke 'The Count'")
 	root.Parse(args)
 
