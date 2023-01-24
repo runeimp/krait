@@ -1,54 +1,83 @@
 Krait v0.0.0
 ============
 
-Full featured CLI library to take command of all subcommand line input
+Go flag package wrapper for simplified subcommand interface building. Sort of like a Cobra lite. I have no idea if this produces lighter binaries. But is possibly lighter in setup?
 
 
 Features
 --------
 
 * Argument parsing
-* Option parsing
-	* POSIX single letter options and option grouping with a single hyphen
-	* GNU word based option prefixed with a double hyphen
+* Options
+	* Prefix Support
+		* POSIX single letter options and option grouping with a single hyphen
+		* POSIX option grouping not supported
+		* GNU long options prefixed with a double hyphen
+		* Multics style long options with a single hyphen prefix
+	* Data Types
+		* `bool`
+		* `float64`
+		* `int`
+		* `string`
+		* `uint`
 * Subcommand parsing
+	* Almost infinite levels of subcommands
+	* Subcommand of a subcommand can have the same name
 
 
-### Recursive Argument Parsing
+### Basic Example with Recursive Argument Parsing
+
 
 ```go
-args := ["tester", "test", "-c" "3", "two", "three"]
+package main
 
-// 1st call
-func (fs *FlagSet) Parse(args []string) (subcmd string, err error) {
-	// ["tester", "test", "-c" "3", "two", "three"]
-	subcmd := args[0] // "tester" the command AKA the command line name of the application
+import (
+	"fmt"
 
-	if len(args) > 1 {
-		if isASubCmd(args[1]) == true {
-			fs.Parse(args[1:])
-		} else {
-			// handle options and command argument if any
-		}
-	}
+	"github.com/runeimp/krait"
+)
 
-
-	return subcmd
+// testFunc is a basic example Subcommand Function handler
+func testFunc(fs *krait.FlagSet, args ...string) {
+	fmt.Printf("testFunc was called with %d parameters %q\n", len(args), args)
 }
 
-// 2nd call
-func Parse(args []string) {
-	// ["test", "-c" "3", "two", "three"]
-	subcmd := args[0]         // "test" the name of the subcommand
-	optionName := args[1]  // "-c"
-	optionValue := args[2] // 3
-	arg1 := args[3]        // "two"
-	arg2 := args[4]        // "three"
+func main() {
 
-	return subcmd
+	// Root command / FlagSet
+	cli := krait.NewFlagSet("myapp")
+	cli.AppLabel = "MyApp v0.1.0"
+
+	testFS := cli.NewFlagSet("test") // 1st level subcommand for the application
+	testFS.CmdFunc = testFunc
+	testFS.Summery = "Tests the basic usage of Krait"
+
+	aliases := []string{"c", "count"}
+	testCountOption := testFS.OptionInt(aliases, 0, "What number will invoke 'The Count'")
+
+	subcmd, err := cli.Parse()
+	// The default help and version systems will exit the app at this point if called
+
+	fmt.Println()
+	fmt.Printf("cli.SubCommand(): %q | subcmd: %q | error: %v\n", cli.SubCommand(), subcmd, err)
+	fmt.Printf("*testCountOption: %#v\n", *testCountOption)
+	fmt.Printf("Argument Count: %d | All arguments: %q\n", len(cli.Args()), cli.Args())
+	fmt.Println()
 }
 ```
 
+If the example command above is run with no arguments or options the output would be the default help...
+
+```text
+MyApp v0.1.0
+
+COMMAND SUMMERY
+---------------
+  help        Displays this help information
+  test        Tests the basic usage of Krait
+  version     Displays the app name and version
+
+```
 
 
 Limitations
@@ -57,23 +86,101 @@ Limitations
 * There can be no options or bare arguments between successive subcommands
 
 
-Is It an Argument to Have or Own?
----------------------------------
+ToDo
+----
 
-* All bare arguments (no prefix or suffix) for the root FlagSet (`FlagSet.ParentName() == "nil"`) must be sub-commands only
-* The root FlagSet (application command) should not take any bare arguments
-* A bare arguments immediately following a subcommand may be a subcommand or an arguments
-* A subcommand that accepts bare arguments should not also accept subcommands as it is far to easy to mess up unless the bare arguments must be part of a specific set of allowed arguments that do not overlap with subcommands, which is still dodgy at best
-* Everything that follows `--` is an argument even it if looks like a valid subcommand
-
-1. Check if an argument is an option or "bare" argument
-	1. Bare
-		1. Check if the current command (application command or subcommand) has subcommands available
-		2. If subcommands are a valid type and the argument is "bare", check if the argument is a valid subcommand
-		3. If the bare argument is not a valid subcommand add to the argument list
-	2. Option
-		1. If an option is a binary flag bare arguments after it may be subcommands or arguments
-		2. If an option requires an option-argument then the argument after it or attached to it via an equal sign or as a suffix to it is be the value for the option-argument and may then be followed by an option, argument, or subcommand
-		3. If an option accepts an optional option-argument then if the argument is to follow it must be connected via an equal sign or as a suffix of the option and may then be followed by an option, argument, or subcommand
+* Add more option types to better match the `flag` package and possibly go beyond
+	* Duration
+	* Int64
+	* Uint64
+	* Func
+	* Date: ISO-8601 and possibly others
+	* DateTime: ISO-8601 and possibly others
+	* Time: ISO-8601
+	* UNIX Timestamp: an int with attitude?
 
 
+
+Advanced Example with Recursive Argument Parsing
+------------------------------------------------
+
+```go
+package main
+
+import "github.com/runeimp/krait"
+
+// jabberwocky is an example Subcommand Function handler that is triggered by
+// its subcommand on the command line
+func jabberwocky(fs *krait.FlagSet, args ...string) {
+	if len(args) > 0 {
+		// Do something with the args
+	}
+
+	// Access the FlagSet in some way, such as...
+	fmt.Println(fs.Summery)
+}
+
+// testFunc is a basic example Subcommand Function handler
+func testFunc(fs *krait.FlagSet, args ...string) {
+	fmt.Printf("testFunc was called with %d arguments\n", len(args))
+}
+
+func main() {
+
+	// Root command / FlagSet
+	cli := krait.NewFlagSet("myapp")
+	cli.AppLabel = "MyApp v0.1.0"
+
+	// The subcommand to use if one is not provided on the command line.
+	// The normal default is the internal "help" subcommand. So this is
+	// really just for special setups.
+	cli.DefaultSubCommand = "jabberwock"
+
+	cli.Epilogue = `The main help epilogue...
+
+This is not required!
+`
+
+	jFS := cli.NewFlagSet("jabberwock") // 1st level subcommand for the application
+	jFS.CmdFunc = jabberwocky
+	jFS.Summery = "The jaws that bite, the claws that catch!"
+
+	testFS := cli.NewFlagSet("test") // 1st level subcommand for the application
+	testFS.CmdFunc = testFunc
+	testFS.Summery = "Tests the basic usage of Krait"
+
+	// The longest name becomes the key in testFS.Options map
+	aliases := []string{"c", "count", "rep"}
+
+	// Capturing "testCountOption" is not necessary
+	testCountOption := testFS.OptionInt(aliases, 0, "What number will invoke 'The Count'")
+
+	testOne := testFS.NewFlagSet("one") // 2nd level subcommand for the test subcommand
+	testOne.CmdFunc = testFunc // Reusing subcommand handlers is reasonable
+	testFS.Summery = "The first named test"
+
+	fmt.Println()
+
+	// commandLine := ["myapp", "test", "-c" "3", "two", "three"]
+	subcmd, err := cli.Parse()    // The "commandLine" variable above could be passed for testing purposes
+	subcmd, err := testFS.Parse() // This would panic as you should only call Parse on the root command/FlagSet
+
+	fmt.Println()
+
+	fmt.Printf("cli.SubCommand(): %q | subcmd: %q | error: %v\n", cli.SubCommand(), subcmd, err)
+	fmt.Printf("*cliCountOption: %d (should be zero if the subcommand test was called as --count is an option for test and not root on the command line)\n", *cliCountOption)
+
+	// This shows accessing the option value in a traditional way but is unnecessary
+	fmt.Printf("*testCountOption: %#v\n", *testCountOption)
+
+	// This shows accessing the option in a more dynamic (as needed) way
+	countInt, err := testFS.Options["count"].GetInt()
+	fmt.Printf("countInt: %d | err: %v\n", countInt, err)
+
+	// Accessing the bare arguments of the command line
+	fmt.Printf("Argument Count: %d | All arguments: %q\n", len(cli.Args()), cli.Args())
+
+	fmt.Println()
+
+}
+```

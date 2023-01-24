@@ -11,7 +11,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	// "log"
+	"log"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -30,6 +31,7 @@ const (
 	ErrorInvalidCommand                    = "invalid command"
 	ErrorNoArguments                       = "no command line arguments"
 	OptionBool                             = "bool"
+	OptionFloat                            = "float64"
 	OptionInt                              = "int"
 	OptionString                           = "string"
 	OptionUint                             = "uint"
@@ -260,30 +262,6 @@ func (fs *FlagSet) NewFlagSet(subcommand string, errHandler ...flag.ErrorHandlin
 	return nfs
 }
 
-func (fs *FlagSet) OptionBool(aliases []string, defaultValue bool, description string) *bool {
-	var alias string
-	alias, aliases = fs.optionAliasSetup(aliases)
-	p := fs.flagSet.Bool(alias, defaultValue, description)
-	fs.Options[alias] = Option{
-		Type:  OptionBool,
-		value: p,
-	}
-	return p
-}
-
-// func (k FlagSet) BoolVar(p *bool, name string, defaultValue bool, description string) {
-// 	fs.flagSet.BoolVar(p, name, defaultValue, description)
-// }
-
-// func (k FlagSet) Int(name string, defaultValue int, description string) *int {
-// 	p := fs.flagSet.Int(name, defaultValue, description)
-// 	return p
-// }
-
-// func (k FlagSet) IntVar(p *int, name string, defaultValue int, description string) {
-// 	fs.flagSet.IntVar(p, name, defaultValue, description)
-// }
-
 func (fs *FlagSet) optionAliasSetup(aliasList []string) (alias string, aliases []string) {
 	var (
 		aliasPrefixed string
@@ -324,17 +302,48 @@ func (fs *FlagSet) optionAliasSetup(aliasList []string) (alias string, aliases [
 	return alias, aliases
 }
 
-func (fs *FlagSet) OptionInt(aliases []string, dataDefault int, description string) (o *int) {
+func (fs *FlagSet) OptionBool(aliases []string, defaultValue bool, description string) (o *bool) {
+	var alias string
+	alias, aliases = fs.optionAliasSetup(aliases)
+	o = fs.flagSet.Bool(alias, defaultValue, description)
+	fs.Options[alias] = Option{
+		Type:  OptionBool,
+		value: o,
+	}
+	return o
+}
+
+func (fs *FlagSet) OptionFloat(aliases []string, defaultValue float64, description string) (o *float64) {
+	var alias string
+
+	// log.Printf("krait.FlagSet.OptionFloat() | %q | aliases: %q\n", fs.cmd, aliases)
+	alias, aliases = fs.optionAliasSetup(aliases)
+	o = fs.flagSet.Float64(alias, defaultValue, description)
+	fs.Options[alias] = Option{Type: OptionFloat, value: o}
+	return o
+}
+
+func (fs *FlagSet) OptionInt(aliases []string, defaultValue int, description string) (o *int) {
 	var alias string
 
 	// log.Printf("krait.FlagSet.OptionInt() | %q | aliases: %q\n", fs.cmd, aliases)
 	alias, aliases = fs.optionAliasSetup(aliases)
 	// log.Printf("krait.FlagSet.OptionInt() | %q | alias: %q\n", fs.cmd, alias)
 	// log.Printf("krait.FlagSet.OptionInt() | %q | aliases: %q\n", fs.cmd, aliases)
-	// log.Printf("krait.FlagSet.OptionInt() | %q | dataDefault: %d | description: %q\n", fs.cmd, dataDefault, description)
-	o = fs.flagSet.Int(alias, dataDefault, description)
+	// log.Printf("krait.FlagSet.OptionInt() | %q | defaultValue: %d | description: %q\n", fs.cmd, defaultValue, description)
+	o = fs.flagSet.Int(alias, defaultValue, description)
 	fs.Options[alias] = Option{Type: OptionInt, value: o}
 	// log.Printf("krait.FlagSet.OptionInt() | %q | fs.Options[%q]: %v\n", fs.cmd, alias, fs.Options[alias])
+	return o
+}
+
+func (fs *FlagSet) OptionUint(aliases []string, defaultValue uint, description string) (o *uint) {
+	var alias string
+
+	// log.Printf("krait.FlagSet.OptionInt() | %q | aliases: %q\n", fs.cmd, aliases)
+	alias, aliases = fs.optionAliasSetup(aliases)
+	o = fs.flagSet.Uint(alias, defaultValue, description)
+	fs.Options[alias] = Option{Type: OptionUint, value: o}
 	return o
 }
 
@@ -404,7 +413,11 @@ func (fs *FlagSet) parseSubCMD(args []string, level int, subcommand string) (sub
 	return subcmd, lvl, err
 }
 
-func (fs *FlagSet) Parse(args []string) (subcmd string, err error) {
+func (fs *FlagSet) Parse(input ...[]string) (subcmd string, err error) {
+	args := os.Args
+	if len(input) > 0 {
+		args = input[0]
+	}
 	// log.Printf("krait.FlagSet.Parse() | %q | args: %q\n", fs.cmd, args)
 	// log.Printf("krait.FlagSet.Parse() | %q | fs.flagSet.Name(): %q\n", fs.cmd, fs.flagSet.Name())
 	// log.Printf("krait.FlagSet.Parse() | %q | fs.ParentName(): %s\n", fs.cmd, quoteNotNil(fs.ParentName()))
@@ -592,11 +605,16 @@ type Option struct {
 
 // GetBool returns boolean true or false for a given value. If the value is
 // a string it will return false if the the value is a zero length string or
-// true otherwise.
+// true otherwise. If the value is a number it is false if the values is zero.
 func (o Option) GetBool() (result bool, err error) {
 	switch o.Type {
 	case OptionBool:
 		result = o.value.(bool)
+	case OptionFloat:
+		result = true
+		if o.value.(float64) == 0.0 {
+			result = false
+		}
 	case OptionInt:
 		// result = false // result is false by default
 		if o.value.(int) != 0 {
@@ -611,6 +629,25 @@ func (o Option) GetBool() (result bool, err error) {
 	return result, err
 }
 
+func (o Option) GetFloat() (result float64, err error) {
+
+	log.Printf("krait.Option.GetFloat() | o.Type: %s | *o.value.(*int): %v (%T)\n", o.Type, o.value.(float64), o.value)
+	switch o.Type {
+	case OptionBool:
+		result = 0.0
+		if o.value.(bool) {
+			result = 1.0
+		}
+	case OptionFloat:
+		result = o.value.(float64)
+	case OptionInt:
+		result = o.value.(float64)
+	case OptionString:
+		result, err = strconv.ParseFloat(o.value.(string), 64)
+	}
+	return result, err
+}
+
 func (o Option) GetInt() (result int, err error) {
 
 	// log.Printf("krait.Option.GetInt() | o.Type: %s | *o.value.(*int): %v (%T)\n", o.Type, *o.value.(*int), o.value)
@@ -620,6 +657,9 @@ func (o Option) GetInt() (result int, err error) {
 		if o.value.(bool) {
 			result = 1
 		}
+	case OptionFloat:
+		// result = strconv.FormatFloat(o.value.(float64), 'f', 0, 64)
+		result = int(math.Round(o.value.(float64)))
 	case OptionInt:
 		result = *o.value.(*int)
 	case OptionString:
@@ -635,10 +675,45 @@ func (o Option) GetString() (result string, err error) {
 		if o.value.(bool) {
 			result = "true"
 		}
+	case OptionFloat:
+		// result = fmt.Sprintf("%f", o.value.(float64))
+		result = strconv.FormatFloat(o.value.(float64), 'f', -1, 64)
 	case OptionInt:
 		result = strconv.Itoa(o.value.(int))
 	case OptionString:
 		result = o.value.(string)
+	case OptionUint:
+		result = fmt.Sprintf("%d", o.value.(uint))
+		// result = strconv.FormatUint(uint64(o.value.(uint)), 10) // Possibly faster but seriously?
+	}
+	return result, err
+}
+
+func (o Option) GetUint() (result uint, err error) {
+
+	// log.Printf("krait.Option.GetInt() | o.Type: %s | *o.value.(*int): %v (%T)\n", o.Type, *o.value.(*int), o.value)
+	var tmp uint64
+
+	switch o.Type {
+	case OptionBool:
+		result = 0
+		if o.value.(bool) {
+			result = 1
+		}
+	case OptionFloat:
+		// result = strconv.FormatFloat(o.value.(float64), 'f', 0, 64)
+		tmp := o.value.(float64)
+		result = 0
+		if tmp > 0.0 {
+			result = uint(math.Round(tmp))
+		}
+	case OptionInt:
+		result = uint(*o.value.(*int))
+	case OptionUint:
+		result = o.value.(uint)
+	case OptionString:
+		tmp, err = strconv.ParseUint(o.value.(string), 10, 64)
+		result = uint(tmp)
 	}
 	return result, err
 }
@@ -688,6 +763,7 @@ func helpOutput(fs *FlagSet, args ...string) {
 	if cmdName == "help" {
 		rfs := fs.getRoot()
 		// log.Printf("krait.helpOutput() | rfs: %s\n", rfs)
+		fmt.Println()
 		fmt.Fprintln(flag.CommandLine.Output(), rfs.AppLabel) // Initial help output is the Application Name and Version AKA Label
 
 		// Output for all commands

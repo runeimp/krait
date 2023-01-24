@@ -67,6 +67,26 @@ func TestOptionBool(t *testing.T) {
 	}
 }
 
+// TestOptionFloat ensure int option parsing works
+func TestOptionFloat(t *testing.T) {
+	want := 1.1
+	args := []string{"krait", "test", "--count", "1.1", "two", "three"}
+	optionAliases := []string{"c", "count"}
+
+	root := NewFlagSet("root")
+	// root.NewFlagSet("test", kraitTestFunction) // ExitOnError is the default
+	testFS := root.NewFlagSet("test")
+	testFS.CmdFunc = kraitTestFunction
+	count := testFS.OptionFloat(optionAliases, 0.0, "What number will invoke 'The Count'")
+	root.Parse(args)
+
+	got := *count
+
+	if got != want {
+		t.Fatalf("got: %f | want: %f", got, want)
+	}
+}
+
 // TestOptionInt ensure int option parsing works
 func TestOptionInt(t *testing.T) {
 	want := 1
@@ -86,6 +106,48 @@ func TestOptionInt(t *testing.T) {
 		t.Fatalf("got: %d | want: %d", got, want)
 	}
 }
+
+// TestOptionUint1 ensure uint option parsing works
+func TestOptionUint1(t *testing.T) {
+	var want uint = 1
+	args := []string{"krait", "test", "--count", "1", "two", "three"}
+	optionAliases := []string{"c", "count"}
+
+	root := NewFlagSet("root")
+	// root.NewFlagSet("test", kraitTestFunction) // ExitOnError is the default
+	testFS := root.NewFlagSet("test")
+	testFS.CmdFunc = kraitTestFunction
+	count := testFS.OptionUint(optionAliases, 0, "What number will invoke 'The Count'")
+	root.Parse(args)
+
+	got := *count
+
+	if got != want {
+		t.Fatalf("got: %d | want: %d", got, want)
+	}
+}
+
+/*
+// TestOptionUint2 ensure float to uint option parsing works
+func TestOptionUint2(t *testing.T) {
+	var want uint = 1
+	args := []string{"krait", "test", "--count", "1.0", "two", "three"}
+	optionAliases := []string{"c", "count"}
+
+	root := NewFlagSet("root")
+	// root.NewFlagSet("test", kraitTestFunction) // ExitOnError is the default
+	testFS := root.NewFlagSet("test")
+	testFS.CmdFunc = kraitTestFunction
+	count := testFS.OptionUint(optionAliases, 0, "What number will invoke 'The Count'")
+	root.Parse(args)
+
+	got := *count
+
+	if got != want {
+		t.Fatalf("got: %d | want: %d", got, want)
+	}
+}
+*/
 
 // TestOptionAliases1 ensure int option parsing works with aliases
 func TestOptionAliases1(t *testing.T) {

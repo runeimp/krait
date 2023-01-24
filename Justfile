@@ -23,13 +23,13 @@ set positional-arguments
 
 # Run code with (optional) arguments
 run *args: _term-wipe
-	go run {{MAIN_CODE}} {{args}}
+	go run cmd/myapp/myapp.go {{args}}
 
 
 # Set Terminal Title
 _term-title title='':
 	#!/bin/sh
-	@printf "\033]0;%s\007" "{{title}}"
+	printf "\033]0;%s\007" "{{title}}"
 
 # Wipe Terminal Buffer and Scrollback Buffer
 @_term-wipe:
