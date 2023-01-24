@@ -1,4 +1,4 @@
-Krait v0.0.0
+Krait v0.1.0
 ============
 
 Go flag package wrapper for simplified subcommand interface building. Sort of like a Cobra lite. I have no idea if this produces lighter binaries. But is possibly lighter in setup?
@@ -90,10 +90,10 @@ ToDo
 ----
 
 * Add more option types to better match the `flag` package and possibly go beyond
-	* Duration
-	* Int64
-	* Uint64
-	* Func
+	* Duration: planned for v1.0.0
+	* Int64: planned for v1.0.0
+	* Uint64: planned for v1.0.0
+	* Func: planned for v1.0.0
 	* Date: ISO-8601 and possibly others
 	* DateTime: ISO-8601 and possibly others
 	* Time: ISO-8601
