@@ -21,7 +21,7 @@ import (
 
 const (
 	LibName    = "Krait"
-	LibVersion = "0.1.0"
+	LibVersion = "0.2.0"
 )
 
 const (

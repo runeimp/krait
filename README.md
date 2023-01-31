@@ -1,4 +1,4 @@
-Krait v0.1.0
+Krait v0.2.0
 ============
 
 Go flag package wrapper for simplified subcommand interface building. Sort of like a Cobra lite. I have no idea if this produces lighter binaries. But is possibly lighter in setup?
