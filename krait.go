@@ -21,7 +21,7 @@ import (
 
 const (
 	LibName    = "Krait"
-	LibVersion = "0.1.0"
+	LibVersion = "0.2.0"
 )
 
 const (
@@ -91,7 +91,7 @@ type FlagSet struct {
 	Options           map[string]Option                    // Map of options to track
 	parent            *FlagSet                             // Parent krait.FlagSet of this krait.FlagSet
 	subcmd            string                               // Active sub-command
-	subcmdAliases     []map[string]string                  // Slice of Map string of valid sub-command aliases
+	subcmdAliases     []map[string]string                  // Slice of Map string of valid sub-command aliases. NOTE: really should be []map[string][]string (level / subcommand / aliases)
 	subcommands       []map[string]*FlagSet                // Slice of Map of krait.FlagSet sub-commands. The slice represents the subcommand levels
 	Summery           string                               // krait.FlagSet sub-command usage summery
 	// Root          bool
@@ -109,9 +109,6 @@ func (fs *FlagSet) String() string {
 	dict["level"] = strconv.Itoa(fs.level)
 	dict["subcmd"] = fs.subcmd
 	dict["Summery"] = fs.Summery
-	// dict["AppLabel"] = fs.AppLabel
-	// dict["AppLabel"] = fs.AppLabel
-	// dict["AppLabel"] = fs.AppLabel
 	// dict["AppLabel"] = fs.AppLabel
 	// dict["AppLabel"] = fs.AppLabel
 
@@ -204,6 +201,19 @@ func (fs *FlagSet) getRoot() (p *FlagSet) {
 	return p
 }
 
+func (fs *FlagSet) getSubCommandAliases(subcommand string) (result []string) {
+	rfs := fs.getRoot()
+	if rfs.subcmdAliases[fs.level] != nil {
+		for alias, subcmd := range rfs.subcmdAliases[fs.level] {
+			if subcmd == subcommand {
+				result = append(result, alias)
+			}
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
 func (fs *FlagSet) NewFlagSet(subcommand string, errHandler ...flag.ErrorHandling) *FlagSet {
 	// log.Printf("krait.FlagSet.NewFlagSet() | %q | subcommand: %q\n", fs.cmd, subcommand)
 	errorHandler := flag.ExitOnError
@@ -223,14 +233,27 @@ func (fs *FlagSet) NewFlagSet(subcommand string, errHandler ...flag.ErrorHandlin
 		subcmdAliases: make([]map[string]string, 2),
 		subcommands:   make([]map[string]*FlagSet, 2),
 	}
+
 	// nfs.flagSet.Usage = func() {
 	// 	fmt.Fprintf(flag.CommandLine.Output(), "\nUSAGE: %s %s\n\n", nfs.flagSet.Name(), nfs.Summery)
 	// }
 	nfs.flagSet.Usage = func() {
 		optionCount := 0
 		usage := usageNoOptions
+		longestName := 0
+		formatNoDefault := "  %%-%ds  %%s (no default)\n"
+		formatWithDefault := "  %%-%ds  %%s (default: %%v)\n"
 
-		nfs.flagSet.VisitAll(func(f *flag.Flag) { optionCount++ })
+		nfs.flagSet.VisitAll(func(f *flag.Flag) {
+			if len(f.Name) > longestName {
+				longestName = len(f.Name)
+			}
+			optionCount++
+		})
+
+		longestName += 3
+		formatNoDefault = fmt.Sprintf(formatNoDefault, longestName)
+		formatWithDefault = fmt.Sprintf(formatWithDefault, longestName)
 
 		if optionCount > 0 {
 			usage = usageWithOptions
@@ -243,12 +266,45 @@ func (fs *FlagSet) NewFlagSet(subcommand string, errHandler ...flag.ErrorHandlin
 		// fmt.Fprintf(flag.CommandLine.Output(), usage, nfs.parent.cmd, nfs.cmd)
 		fmt.Fprintf(flag.CommandLine.Output(), usage, cmdChain)
 
+		// log.Printf("FlagSet.flagSet.Usage() | nfs.optionAliases: %#v\n", nfs.optionAliases)
+		// for k, v := range nfs.optionAliases {
+		// 	log.Printf("FlagSet.flagSet.Usage() | nfs.optionAliases[%q]: %s\n", k, v)
+		// }
+
 		nfs.flagSet.VisitAll(func(f *flag.Flag) {
 			optionName := fmt.Sprintf("-%s", f.Name)
+			gnuOptionName := fmt.Sprintf("--%s", f.Name)
+
+			aliases := []string{}
+			for k, v := range nfs.optionAliases {
+				if v == gnuOptionName {
+					aliases = append(aliases, k)
+				}
+			}
+			// log.Printf("FlagSet.flagSet.Usage() | optionName: %q | aliases: %q\n", optionName, aliases)
+			// log.Printf("FlagSet.flagSet.Usage() | f.Name: %q\n", f.Name)
+
+			if len(aliases) == 1 && len(aliases[0]) < 3 {
+				optionName += ", " + aliases[0]
+			}
+
 			if f.DefValue == "" {
-				fmt.Fprintf(flag.CommandLine.Output(), "  %-13s  %s (no default)\n", optionName, f.Usage)
+				// fmt.Fprintf(flag.CommandLine.Output(), "  %-13s  %s (no default)\n", optionName, f.Usage)
+				fmt.Fprintf(flag.CommandLine.Output(), formatNoDefault, optionName, f.Usage)
 			} else {
-				fmt.Fprintf(flag.CommandLine.Output(), "  %-13s  %s (default: %v)\n", optionName, f.Usage, f.DefValue)
+				// fmt.Fprintf(flag.CommandLine.Output(), "  %-13s  %s (default: %v)\n", optionName, f.Usage, f.DefValue)
+				fmt.Fprintf(flag.CommandLine.Output(), formatWithDefault, optionName, f.Usage, f.DefValue)
+			}
+			if len(aliases) > 0 {
+				// fmt.Fprintf(flag.CommandLine.Output(), "    %v\n", aliases)
+				if len(aliases) > 1 {
+					aliasSort(aliases)
+					str := ""
+					for _, a := range aliases {
+						str += ", " + a
+					}
+					fmt.Println("      aliases: " + str[2:])
+				}
 			}
 		})
 		fmt.Println()
@@ -293,11 +349,17 @@ func (fs *FlagSet) optionAliasSetup(aliasList []string) (alias string, aliases [
 		fs.optionAliases[a] = aliasPrefixed
 
 		// GNU long options
-		if len(a) > 1 {
+		if len(a) > 2 {
 			a = "-" + a
 			fs.optionAliases[a] = aliasPrefixed
 		}
 	}
+	fs.optionAliases["--"+alias] = aliasPrefixed
+
+	// for k, v := range fs.optionAliases {
+	// 	log.Printf("krait.FlagSet.optionAliasSetup() | %d | fs.optionAliases[%q]: %q\n", fs.level, k, v)
+	// }
+	// log.Printf("krait.FlagSet.optionAliasSetup() | %d | alias: %q | aliases: %q\n", fs.level, alias, aliases)
 
 	return alias, aliases
 }
@@ -498,6 +560,8 @@ func (fs *FlagSet) Parse(input ...[]string) (subcmd string, err error) {
 
 	// log.Printf("krait.FlagSet.Parse() | %q | subcmd: %q | err: %v\n", fs.cmd, subcmd, err)
 
+	fs.getRoot().subcmd = subcmd
+
 	return subcmd, err
 }
 
@@ -517,19 +581,21 @@ func (fs *FlagSet) Parsed() bool {
 
 // SubCommand returns the name of the active subcommand
 func (fs *FlagSet) SubCommand() string {
-	return fs.subcmd
+	return fs.getRoot().subcmd
 }
 
 // SubcommandAlias links the supplied alias to the specified subcommand
-func (fs *FlagSet) SubcommandAlias(subcommand, alias string) {
-	// log.Printf("krait.FlagSet.SubcommandAlias() | fs.level: %d | subcommand: %q | alias: %q\n", fs.level, subcommand, alias)
+func (fs *FlagSet) SubcommandAlias(aliases ...string) {
+	// log.Printf("krait.FlagSet.SubcommandAlias() | fs.level: %d | fs.cmd: %q | alias: %q\n", fs.level, fs.cmd, aliases)
 
 	rfs := fs.getRoot()
 
 	if rfs.subcmdAliases[fs.level] == nil {
 		rfs.subcmdAliases[fs.level] = make(map[string]string)
 	}
-	rfs.subcmdAliases[fs.level][alias] = subcommand
+	for _, alias := range aliases {
+		rfs.subcmdAliases[fs.level][alias] = fs.cmd
+	}
 
 	// for lvl := range rfs.subcmdAliases {
 	// 	for alias, subcmd := range rfs.subcmdAliases[lvl] {
@@ -558,42 +624,46 @@ func NewFlagSet(name string) (fs *FlagSet) {
 		// root:          true,
 	}
 
-	fs.flagSet.Usage = func() {
-		optionCount := 0
-		usage := usageNoOptions
+	/*
+		fs.flagSet.Usage = func() {
+			optionCount := 0
+			usage := usageNoOptions
 
-		fs.flagSet.VisitAll(func(f *flag.Flag) { optionCount++ })
+			fs.flagSet.VisitAll(func(f *flag.Flag) { optionCount++ })
 
-		if optionCount > 0 {
-			usage = usageWithOptions
-		}
-
-		cmdChain := strings.Join(fs.getCommandList(), " ")
-
-		// fmt.Fprintf(flag.CommandLine.Output(), usage, fs.parent.cmd, fs.cmd)
-		fmt.Fprintf(flag.CommandLine.Output(), usage, cmdChain)
-
-		fs.flagSet.VisitAll(func(f *flag.Flag) {
-			optionName := fmt.Sprintf("-%s", f.Name)
-			if f.DefValue == "" {
-				fmt.Fprintf(flag.CommandLine.Output(), "  %-13s  %s (no default)\n", optionName, f.Usage)
-			} else {
-				fmt.Fprintf(flag.CommandLine.Output(), "  %-13s  %s (default: %v)\n", optionName, f.Usage, f.DefValue)
+			if optionCount > 0 {
+				usage = usageWithOptions
 			}
-		})
-		fmt.Println()
-	}
+
+			cmdChain := strings.Join(fs.getCommandList(), " ")
+
+			// fmt.Fprintf(flag.CommandLine.Output(), usage, fs.parent.cmd, fs.cmd)
+			fmt.Fprintf(flag.CommandLine.Output(), usage, cmdChain)
+
+			fs.flagSet.VisitAll(func(f *flag.Flag) {
+				optionName := fmt.Sprintf("-%s", f.Name)
+				if f.DefValue == "" {
+					fmt.Fprintf(flag.CommandLine.Output(), "  %-13s  %s (no default)\n", optionName, f.Usage)
+				} else {
+					fmt.Fprintf(flag.CommandLine.Output(), "  %-13s  %s (default: %v)\n", optionName, f.Usage, f.DefValue)
+				}
+			})
+			fmt.Println()
+		}
+	*/
 
 	verFS := fs.NewFlagSet("version", flag.ExitOnError)
 	verFS.CmdFunc = cmdVersion
 	verFS.Summery = "Displays the app name and version"
-	verFS.SubcommandAlias("version", "ver")
+	// verFS.SubcommandAlias("version", "ver")
+	verFS.SubcommandAlias("ver")
 
 	helpFS := fs.NewFlagSet("help", flag.ExitOnError)
 	helpFS.CmdFunc = cmdHelp
 	helpFS.HelpOutput = helpOutput
 	helpFS.Summery = "Displays this help information"
-	helpFS.SubcommandAlias("help", "hlp")
+	// helpFS.SubcommandAlias("help", "hlp")
+	helpFS.SubcommandAlias("hlp")
 
 	return fs
 }
@@ -609,7 +679,8 @@ type Option struct {
 func (o Option) GetBool() (result bool, err error) {
 	switch o.Type {
 	case OptionBool:
-		result = o.value.(bool)
+		b := o.value.(*bool)
+		result = *b
 	case OptionFloat:
 		result = true
 		if o.value.(float64) == 0.0 {
@@ -625,6 +696,8 @@ func (o Option) GetBool() (result bool, err error) {
 		if o.value.(string) != "" {
 			result = true
 		}
+	default:
+		err = fmt.Errorf("unhandled option type: %T", o.Type)
 	}
 	return result, err
 }
@@ -641,9 +714,13 @@ func (o Option) GetFloat() (result float64, err error) {
 	case OptionFloat:
 		result = o.value.(float64)
 	case OptionInt:
-		result = o.value.(float64)
+		result = float64(o.value.(int))
 	case OptionString:
 		result, err = strconv.ParseFloat(o.value.(string), 64)
+	case OptionUint:
+		result = float64(o.value.(uint))
+	default:
+		err = fmt.Errorf("unhandled option type: %T", o.Type)
 	}
 	return result, err
 }
@@ -654,7 +731,7 @@ func (o Option) GetInt() (result int, err error) {
 	switch o.Type {
 	case OptionBool:
 		result = 0
-		if o.value.(bool) {
+		if *o.value.(*bool) {
 			result = 1
 		}
 	case OptionFloat:
@@ -664,6 +741,10 @@ func (o Option) GetInt() (result int, err error) {
 		result = *o.value.(*int)
 	case OptionString:
 		result, err = strconv.Atoi(o.value.(string))
+	case OptionUint:
+		result = int(o.value.(uint))
+	default:
+		err = fmt.Errorf("unhandled option type: %T", o.Type)
 	}
 	return result, err
 }
@@ -685,6 +766,8 @@ func (o Option) GetString() (result string, err error) {
 	case OptionUint:
 		result = fmt.Sprintf("%d", o.value.(uint))
 		// result = strconv.FormatUint(uint64(o.value.(uint)), 10) // Possibly faster but seriously?
+	default:
+		err = fmt.Errorf("unhandled option type: %T", o.Type)
 	}
 	return result, err
 }
@@ -709,13 +792,74 @@ func (o Option) GetUint() (result uint, err error) {
 		}
 	case OptionInt:
 		result = uint(*o.value.(*int))
-	case OptionUint:
-		result = o.value.(uint)
 	case OptionString:
 		tmp, err = strconv.ParseUint(o.value.(string), 10, 64)
 		result = uint(tmp)
+	case OptionUint:
+		tmp := o.value.(*uint)
+		result = *tmp
+	default:
+		err = fmt.Errorf("unhandled option type: %T", o.Type)
 	}
 	return result, err
+}
+
+func aliasSort(s []string) {
+	// log.Printf("krait.aliasSort() | s: %q\n", s)
+	posix := []string{}
+	multics := []string{}
+	gnu := []string{}
+
+	for _, v := range s {
+		if v[0:2] == "--" {
+			// GNU Options
+			gnu = append(gnu, v)
+		} else if len(v) == 2 {
+			// POSIX Options
+			posix = append(posix, v)
+		} else {
+			// Multics Options
+			multics = append(multics, v)
+		}
+	}
+
+	i := -1
+
+	if len(posix) > 0 {
+		if len(posix) > 1 {
+			sort.Strings(posix)
+		}
+
+		for _, v := range posix {
+			i++
+			// log.Printf("krait.aliasSort() | i: %d (POSIX)\n", i)
+			s[i] = v
+		}
+	}
+
+	if len(multics) > 0 {
+		if len(multics) > 1 {
+			sort.Strings(multics)
+		}
+
+		for _, v := range multics {
+			i++
+			// log.Printf("krait.aliasSort() | i: %d (Multics)\n", i)
+			s[i] = v
+		}
+	}
+
+	if len(gnu) > 0 {
+		if len(gnu) > 1 {
+			sort.Strings(gnu)
+		}
+
+		for _, v := range gnu {
+			i++
+			// log.Printf("krait.aliasSort() | i: %d (GNU)\n", i)
+			s[i] = v
+		}
+	}
 }
 
 func cmdHelp(fs *FlagSet, args ...string) {
@@ -767,7 +911,10 @@ func helpOutput(fs *FlagSet, args ...string) {
 		fmt.Fprintln(flag.CommandLine.Output(), rfs.AppLabel) // Initial help output is the Application Name and Version AKA Label
 
 		// Output for all commands
-		widestCommand := 0
+		var (
+			aliases       = make(map[string][]string)
+			widestCommand int
+		)
 
 		cmdList := make([][]string, 1)
 		for i := range cmdList {
@@ -781,8 +928,16 @@ func helpOutput(fs *FlagSet, args ...string) {
 			for subCmdName := range fs.parent.subcommands[lvl] {
 				// log.Printf("krait.helpOutput() | %d | subCmdName: %q | subCmdFS.flagSet.Name(): %q, (%d)\n", lvl, subCmdName, subCmdFS.flagSet.Name(), len(subCmdFS.flagSet.Name()))
 				// log.Printf("krait.helpOutput() | %d | subCmdName: %q, (%d)\n", lvl, subCmdName, len(subCmdName))
+				aliases[subCmdName] = fs.getSubCommandAliases(subCmdName)
+				// log.Printf("krait.helpOutput() | %d | aliases[%q]: %q\n", lvl, subCmdName, aliases[subCmdName])
 				if len(subCmdName) > widestCommand {
 					widestCommand = len(subCmdName)
+
+					// Check if there is a single alias and if there is it will
+					// be added to the subcommand width + 2 for the comma space
+					if len(aliases[subCmdName]) == 1 {
+						widestCommand += 2 + len(aliases[subCmdName])
+					}
 				}
 				for lvl >= len(cmdList) {
 					cmdList = append(cmdList, []string{})
@@ -794,9 +949,13 @@ func helpOutput(fs *FlagSet, args ...string) {
 			// for i, subCmdName := range cmdList[lvl] {
 			// 	log.Printf("krait.helpOutput() | %d:%d | subCmdName: %q\n", lvl, i, subCmdName)
 			// }
+			// for subcmd, aliases := range aliases {
+			// 	log.Printf("krait.helpOutput() | %d | subcmd: %q | aliases: %q\n", lvl, subcmd, aliases)
+			// }
 		}
 
-		format := fmt.Sprintf("  %%-%ds  %%s\n", widestCommand)
+		format := fmt.Sprintf("  %%-%ds  %%s\n", widestCommand+3)
+		// format := fmt.Sprintf("  %%-%ds  %%s", widestCommand)
 		// formatOptionDefault := fmt.Sprintf("  %%-%ds  %%s (default: %%v)\n", widestCommand)
 		// formatOptionNodefault := fmt.Sprintf("  %%-%ds  %%s (no default)\n", widestCommand)
 
@@ -811,8 +970,26 @@ func helpOutput(fs *FlagSet, args ...string) {
 				if len(cmdName) > 0 {
 					// log.Printf("krait.helpOutput() | cmdName: %q\n", cmdName)
 					subCmdFS := rfs.subcommands[lvl][cmdName]
-					fmt.Fprintf(flag.CommandLine.Output(), format, subCmdFS.flagSet.Name(), subCmdFS.Summery)
+					// helpLine := fmt.Sprintf(format, subCmdFS.flagSet.Name(), subCmdFS.Summery)
+
+					if len(aliases[cmdName]) == 1 {
+						cmdName += ", " + aliases[cmdName][0]
+					}
+					fmt.Fprintf(flag.CommandLine.Output(), format, cmdName, subCmdFS.Summery)
+
 					// subCmdFS.flagSet.Usage()
+					// aliases := rfs.subcmdAliases[lvl][cmdName]
+					// aliases := fs.getSubCommandAliases(cmdName)
+					// log.Printf("krait.helpOutput() | rfs.subcmdAliases[%d][%q] = aliases: %q\n", lvl, cmdName, aliases)
+					if len(aliases[cmdName]) > 1 {
+						aliasList := ""
+						for _, alias := range aliases[cmdName] {
+							aliasList += ", " + alias
+						}
+						aliasList = aliasList[2:]
+						fmt.Fprintf(flag.CommandLine.Output(), "      aliases: %s\n", aliasList)
+					}
+					// fmt.Fprintf(flag.CommandLine.Output(), helpLine)
 				}
 			}
 		}
