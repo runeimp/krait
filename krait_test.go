@@ -149,6 +149,30 @@ func TestOptionUint2(t *testing.T) {
 }
 */
 
+func TestOptionUintFromInt(t *testing.T) {
+	var want uint = 1
+	args := []string{"krait", "test", "--count", "1", "two", "three"}
+	optionAliases := []string{"c", "count"}
+
+	root := NewFlagSet("root")
+	// root.NewFlagSet("test", kraitTestFunction) // ExitOnError is the default
+	testFS := root.NewFlagSet("test")
+	testFS.CmdFunc = kraitTestFunction
+	testFS.OptionInt(optionAliases, 0, "What number will invoke 'The Count'")
+	root.Parse(args)
+
+	count, err := testFS.Options["count"].GetUint()
+	if err != nil {
+		t.Fatalf("error %d", err)
+	}
+
+	got := count
+
+	if got != want {
+		t.Fatalf("got: %d | want: %d", got, want)
+	}
+}
+
 // TestOptionAliases1 ensure int option parsing works with aliases
 func TestOptionAliases1(t *testing.T) {
 	want := 2
